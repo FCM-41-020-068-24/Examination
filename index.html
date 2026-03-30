@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Realistic Dream Villa VR - 3 Bedroom</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.6.1/dist/aframe-extras.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/aframe-environment-component@1.3.1/dist/aframe-environment-component.min.js"></script>
+
+  <script>
+    AFRAME.registerComponent('water-motion', {
+      init: function () { this.time = 0; },
+      tick: function (t, dt) {
+        this.time += dt / 1000;
+        var mesh = this.el.getObject3D('mesh');
+        if (!mesh || !mesh.geometry) return;
+        if (!this.basePositions) {
+          if (!mesh.geometry.attributes.position) return;
+          this.basePositions = new Float32Array(mesh.geometry.attributes.position.array);
+        }
+        var pos = mesh.geometry.attributes.position;
+        for (var i = 0; i < pos.count; i++) {
+          var vx = this.basePositions[i * 3];
+          var vy = this.basePositions[i * 3 + 1];
+          var z = (Math.sin(vx * 2.5 + this.time * 2.0) * 0.03) +
+            (Math.cos(vy * 2.5 + this.time * 1.5) * 0.03) +
+            (Math.sin((vx + vy) * 1.5 - this.time * 1.0) * 0.02);
+          pos.setZ(i, z);
+        }
+        pos.needsUpdate = true;
+        mesh.geometry.computeVertexNormals();
+      }
+    });
+
+    AFRAME.registerGeometry('curtain', {
+      schema: {
+        width: { default: 2 },
+        height: { default: 4 },
+        folds: { default: 6 },
+        depth: { default: 0.15 }
+      },
+      init: function (data) {
+        var geometry = new THREE.PlaneGeometry(data.width, data.height, 60, 1);
+        var pos = geometry.attributes.position;
+        var frequency = (Math.PI * 2 * data.folds) / data.width;
+        for (var i = 0; i < pos.count; i++) {
+          var x = pos.getX(i);
+          var z = Math.sin(x * frequency) * data.depth;
+          pos.setZ(i, z);
+        }
+        geometry.computeVertexNormals();
+        this.geometry = geometry;
+      }
+    });
+
+    AFRAME.registerComponent('patrol', {
+      schema: { points: { type: 'array', default: [] }, speed: { type: 'number', default: 1 } },
+      init: function () {
+        this.targetIndex = 0;
+        this.direction = new THREE.Vector3();
+        this.wrapper = new THREE.Object3D();
+      },
+      tick: function (time, timeDelta) {
+        if (this.data.points.length === 0) return;
+        var currentPos = this.el.object3D.position;
+        var targetStr = this.data.points[this.targetIndex];
+        var parts = targetStr.split(' ');
+        var targetPos = new THREE.Vector3(parseFloat(parts[0]), parseFloat(parts[1]), parseFloat(parts[2]));
+        this.direction.subVectors(targetPos, currentPos);
+        var distance = this.direction.length();
+
+        if (distance < 0.2) {
+          this.targetIndex = (this.targetIndex + 1) % this.data.points.length;
+        } else {
+          this.direction.normalize();
+          currentPos.addScaledVector(this.direction, (this.data.speed * timeDelta) / 1000);
+          var lookTarget = new THREE.Vector3().copy(targetPos);
+          lookTarget.y = currentPos.y;
+          this.wrapper.position.copy(currentPos);
+          this.wrapper.lookAt(lookTarget);
+          var diff = this.wrapper.rotation.y - this.el.object3D.rotation.y;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          this.el.object3D.rotation.y += diff * 0.05;
+        }
+      }
+    });
+
+    AFRAME.registerComponent('spin', {
+      schema: { speed: { type: 'number', default: 90 } },
+      tick: function (t, dt) { this.el.object3D.rotation.y += THREE.MathUtils.degToRad(this.data.speed * (dt / 1000)); }
+    });
+
+    AFRAME.registerComponent('toggle-door', {
+      schema: { offset: { type: 'number', default: -2.4 }, dur: { type: 'number', default: 800 } },
+      init: function () {
+        this.isOpen = false;
+        this.baseX = this.el.object3D.position.x;
+        this.el.addEventListener('click', () => {
+          this.isOpen = !this.isOpen;
+          const targetX = this.isOpen ? this.baseX + this.data.offset : this.baseX;
+          this.el.setAttribute('animation', `property: position.x; to: ${targetX}; dur: ${this.data.dur}; easing: easeInOutSine`);
+        });
+        this.el.addEventListener('mouseenter', () => this.el.querySelector('a-box').setAttribute('color', '#aaddff'));
+        this.el.addEventListener('mouseleave', () => this.el.querySelector('a-box').setAttribute('color', '#6699cc'));
+      }
+    });
+
+    AFRAME.registerComponent('day-night-toggle', {
+      init: function () {
+        this.isDay = true;
+        this.el.addEventListener('click', () => {
+          this.isDay = !this.isDay;
+          const env = document.querySelector('#main-env');
+          const ambient = document.querySelector('#ambient-light');
+          const sun = document.querySelector('#sun-light');
+          const intLights = document.querySelectorAll('.interior-light');
+
+          if (this.isDay) {
+            env.setAttribute('environment', 'preset: contact; skyType: atmosphere; lighting: none; groundColor: #3d4a36; groundColor2: #36442e;');
+            ambient.setAttribute('intensity', '0.6');
+            sun.setAttribute('intensity', '3');
+            intLights.forEach(light => light.setAttribute('intensity', '0.8'));
+            this.el.querySelector('.switch-toggle').setAttribute('position', '0 0.05 0.02');
+            this.el.querySelector('.switch-toggle').setAttribute('color', '#eee');
+          } else {
+            env.setAttribute('environment', 'preset: contact; skyType: gradient; skyColor: #010111; horizonColor: #111122; lighting: none; groundColor: #111;');
+            ambient.setAttribute('intensity', '0.05');
+            sun.setAttribute('intensity', '0.05');
+            intLights.forEach(light => light.setAttribute('intensity', '1.5'));
+            this.el.querySelector('.switch-toggle').setAttribute('position', '0 -0.05 0.02');
+            this.el.querySelector('.switch-toggle').setAttribute('color', '#555');
+          }
+        });
+      }
+    });
+  </script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #000;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    #ui-overlay {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      z-index: 10;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 15px 20px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      pointer-events: none;
+    }
+
+    #ui-overlay h1 {
+      margin: 0 0 5px 0;
+      font-size: 20px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    #ui-overlay p {
+      margin: 5px 0 0 0;
+      font-size: 14px;
+      color: #eebb55;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="ui-overlay">
+    <h1>Modern Dream Villa VR</h1>
+    <p>3-Bedroom Edition</p>
+    <p>Click on Glass Doors to Slide them Open.</p>
+  </div>
+
+  <!-- Main Scene -->
+  <a-scene shadow="type: pcfsoft" renderer="antialias: true; colorManagement: true; exposure: 1.2"
+    cursor="rayOrigin: mouse">
+
+    <a-assets timeout="10000">
+      <!-- WoodFloor064 -->
+      <img id="wood-col" src="./assets/textures/WoodFloor064_2K-JPG/WoodFloor064_2K-JPG_Color.jpg">
+      <img id="wood-nrm" src="./assets/textures/WoodFloor064_2K-JPG/WoodFloor064_2K-JPG_NormalGL.jpg">
+      <img id="wood-rgh" src="./assets/textures/WoodFloor064_2K-JPG/WoodFloor064_2K-JPG_Roughness.jpg">
+
+      <!-- Tiles132A (Marble) -->
+      <img id="marble-col" src="./assets/textures/Tiles132A_2K-JPG/Tiles132A_2K-JPG_Color.jpg">
+      <img id="marble-nrm" src="./assets/textures/Tiles132A_2K-JPG/Tiles132A_2K-JPG_NormalGL.jpg">
+      <img id="marble-rgh" src="./assets/textures/Tiles132A_2K-JPG/Tiles132A_2K-JPG_Roughness.jpg">
+
+      <!-- Plaster002 (Walls) -->
+      <img id="wall-col" src="./assets/textures/Plaster002_2K-JPG/Plaster002_2K-JPG_Color.jpg">
+      <img id="wall-nrm" src="./assets/textures/Plaster002_2K-JPG/Plaster002_2K-JPG_NormalGL.jpg">
+      <img id="wall-rgh" src="./assets/textures/Plaster002_2K-JPG/Plaster002_2K-JPG_Roughness.jpg">
+
+      <!-- Leather009 (Sofa) -->
+      <img id="leather-col" src="./assets/textures/Leather009_2K-JPG/Leather009_2K-JPG_Color.jpg">
+      <img id="leather-nrm" src="./assets/textures/Leather009_2K-JPG/Leather009_2K-JPG_NormalGL.jpg">
+      <img id="leather-rgh" src="./assets/textures/Leather009_2K-JPG/Leather009_2K-JPG_Roughness.jpg">
+
+      <!-- Concrete009 (Foundation & Street) -->
+      <img id="concrete-col" src="./assets/textures/Concrete009_2K-JPG/Concrete009_2K-JPG_Color.jpg">
+      <img id="concrete-nrm" src="./assets/textures/Concrete009_2K-JPG/Concrete009_2K-JPG_NormalGL.jpg">
+      <img id="concrete-rgh" src="./assets/textures/Concrete009_2K-JPG/Concrete009_2K-JPG_Roughness.jpg">
+
+      <!-- Tiles011 (Pool Tiles) -->
+      <img id="pool-col" src="./assets/textures/Tiles011_1K-JPG/Tiles011_1K-JPG_Color.jpg">
+      <img id="pool-nrm" src="./assets/textures/Tiles011_1K-JPG/Tiles011_1K-JPG_NormalGL.jpg">
+      <img id="pool-rgh" src="./assets/textures/Tiles011_1K-JPG/Tiles011_1K-JPG_Roughness.jpg">
+
+      <!-- LeafSet024 (Trees) -->
+      <img id="leaf-col" src="./assets/textures/LeafSet024_2K-JPG/LeafSet024_2K-JPG_Color.jpg">
+      <img id="leaf-nrm" src="./assets/textures/LeafSet024_2K-JPG/LeafSet024_2K-JPG_NormalGL.jpg">
+      <img id="leaf-rgh" src="./assets/textures/LeafSet024_2K-JPG/LeafSet024_2K-JPG_Roughness.jpg">
+
+      <!-- Unchanged required assets -->
+      <img id="fabric-tex" src="https://images.unsplash.com/photo-1605342790938-1f1f38e65306?w=512&q=80"
+        crossorigin="anonymous">
+      <img id="grass-tex" src="./assets/grass.png">
+      <img id="water-tex" src="./assets/water.png">
+
+      <!-- NEW Available Assets Mapping -->
+      <img id="marble-alt" src="./assets/marble.png">
+      <img id="stone-alt" src="./assets/stone.png">
+      <img id="wall-alt" src="./assets/wall.png">
+      <img id="wood-alt" src="./assets/wood.png">
+
+      <!-- Media Assets for Art/TV -->
+      <img id="art-01" src="./assets/media__1774805121753.jpg">
+      <img id="art-02" src="./assets/media__1774805121794.png">
+      <img id="screen-01" src="./assets/media__1774805122331.jpg">
+      <img id="screen-02" src="./assets/media__1774805122621.jpg">
+      <img id="screen-03" src="./assets/media__1774805122622.jpg">
+    </a-assets>
+
+    <!-- Custom Grass Ground Map -->
+    <a-plane position="0 0.05 0" rotation="-90 0 0" width="100" height="100"
+      material="src: #grass-tex; repeat: 40 40; roughness: 1; metalness: 0"></a-plane>
+
+    <!-- Environment -->
+    <a-entity id="main-env"
+      environment="preset: contact; skyType: atmosphere; lighting: none; groundColor: #3d4a36; groundColor2: #36442e; dressing: trees; dressingAmount: 30; dressingColor: #284224"></a-entity>
+
+    <!-- Global Lighting -->
+    <a-entity id="ambient-light" light="type: ambient; color: #ffffff; intensity: 0.6"></a-entity>
+    <a-entity id="sun-light"
+      light="type: directional; color: #ffebd6; intensity: 3; castShadow: true; shadowMapHeight: 2048; shadowMapWidth: 2048; shadowBias: -0.0001;"
+      position="15 25 15"></a-entity>
+
+    <!-- Camera Rig -->
+    <a-entity id="rig" position="0 0 14">
+      <a-camera position="0 1.6 0" look-controls wasd-controls="acceleration: 40">
+        <a-cursor color="#fff" raycaster="objects: .clickable"
+          geometry="primitive: ring; radiusInner: 0.01; radiusOuter: 0.02"></a-cursor>
+      </a-camera>
+    </a-entity>
+
+    <!-- ==========================================
+           UPSCALED MANSION WRAPPER (3 BEDROOM EXPANSION)
+           ========================================== -->
+    <a-entity id="mansion-wrapper" position="0 0 -6.8" scale="1.4 1.4 1.4">
+
+      <!-- Architecture Shell -->
+      <a-entity id="architecture" position="0 0 0">
+        <!-- Main Foundation Deck -->
+        <a-box position="0 0.1 -4" width="24" height="0.2" depth="26" color="#d1d1d1"
+          material="roughness: 0.7; metalness: 0.1" shadow="receive: true"></a-box>
+        <!-- Wooden Deck around the pool -->
+        <a-box position="0 0.11 7.5" width="24" height="0.21" depth="3" color="#6e503b"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 12 1.5; roughness: 0.8"
+          shadow="receive: true"></a-box>
+
+        <!-- Poolside Sun Loungers -->
+        <a-entity id="sun-loungers" position="0 0.22 7.5">
+          <!-- Lounger 1 -->
+          <a-entity position="-1 0 0" rotation="0 190 0">
+            <a-box position="0 0.15 0" width="0.8" height="0.1" depth="2.5"
+              material="src: #wood-col; repeat: 0.8 2.5; roughness: 0.9" shadow="cast: true"></a-box>
+            <a-box position="0 0.25 -0.4" width="0.75" height="0.1" depth="1.4" color="#fafafa"
+              material="roughness: 0.9" shadow="cast: true"></a-box>
+            <a-box position="0 0.55 0.6" width="0.75" height="0.8" depth="0.1" rotation="-25 0 0" color="#fafafa"
+              material="roughness: 0.9" shadow="cast: true"></a-box>
+          </a-entity>
+          <!-- Lounger 2 -->
+          <a-entity position="0.8 0 0" rotation="0 170 0">
+            <a-box position="0 0.15 0" width="0.8" height="0.1" depth="2.5"
+              material="src: #wood-col; repeat: 0.8 2.5; roughness: 0.9" shadow="cast: true"></a-box>
+            <a-box position="0 0.25 -0.4" width="0.75" height="0.1" depth="1.4" color="#fafafa"
+              material="roughness: 0.9" shadow="cast: true"></a-box>
+            <a-box position="0 0.55 0.6" width="0.75" height="0.8" depth="0.1" rotation="-30 0 0" color="#fafafa"
+              material="roughness: 0.9" shadow="cast: true"></a-box>
+          </a-entity>
+        </a-entity>
+
+        <!-- Floors Front Rooms -->
+        <a-plane position="0 0.22 -1" rotation="-90 0 0" width="8" height="10"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; normalTextureRepeat: 4 5; repeat: 4 5; roughness: 0.8; metalness: 0.1"
+          shadow="receive: true"></a-plane>
+        <a-plane position="6 0.22 -1" rotation="-90 0 0" width="6" height="10"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; normalTextureRepeat: 4 4; repeat: 4 4; roughness: 0.8; metalness: 0.1"
+          shadow="receive: true"></a-plane>
+        <a-plane position="-6 0.22 -1" rotation="-90 0 0" width="6" height="10"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 4 6; roughness: 0.8; metalness: 0.1"
+          shadow="receive: true"></a-plane>
+        <!-- Floors Rear Rooms & Hallway -->
+        <a-plane position="0 0.22 -10" rotation="-90 0 0" width="2" height="8"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; normalTextureRepeat: 1 4; repeat: 1 4; roughness: 0.8"
+          shadow="receive: true"></a-plane>
+        <a-plane position="-4.5 0.22 -10" rotation="-90 0 0" width="7" height="8"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 4 4; roughness: 0.8; metalness: 0.1"
+          shadow="receive: true"></a-plane>
+        <a-plane position="4.5 0.22 -10" rotation="-90 0 0" width="7" height="8"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 4 4; roughness: 0.8; metalness: 0.1"
+          shadow="receive: true"></a-plane>
+
+        <!-- Thick Walls (Outer) -->
+        <a-box position="0 2.2 -14" width="18" height="4" depth="0.4" color="#f5f5f5"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 9 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-8.8 2.2 -5" width="0.4" height="4" depth="18" color="#f5f5f5"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 9 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="8.8 2.2 -5" width="0.4" height="4" depth="18" color="#f5f5f5"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 9 2"
+          shadow="cast: true; receive: true"></a-box>
+
+        <!-- Inner Separating Walls Front (with Door Gaps) -->
+        <!-- Left Wall (Bed 1 to Living) -->
+        <a-box position="-3 2.2 -3.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-3 2.2 1.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-3 3.8 -1" width="0.2" height="0.8" depth="2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1 0.4"
+          shadow="cast: true; receive: true"></a-box>
+
+        <!-- Right Wall (Kitchen to Living) -->
+        <a-box position="3 2.2 -3.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="3 2.2 1.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="3 3.8 -1" width="0.2" height="0.8" depth="2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1 0.4"
+          shadow="cast: true; receive: true"></a-box>
+
+        <!-- Back Cross Walls (with gap for hallway) -->
+        <a-box position="-4.9 2.2 -5" width="7.8" height="4" depth="0.2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 3.9 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="4.9 2.2 -5" width="7.8" height="4" depth="0.2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 3.9 2"
+          shadow="cast: true; receive: true"></a-box>
+        <!-- Hallway Entrance Header -->
+        <a-box position="0 3.8 -5" width="2" height="0.8" depth="0.2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1 0.4"></a-box>
+
+        <!-- Hallway Walls with doorway gaps -->
+        <a-box position="-1 2.2 -12" width="0.2" height="4" depth="4" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 2 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-1 2.2 -6.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-1 3.8 -9" width="0.2" height="0.8" depth="2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1 0.4"></a-box>
+
+        <a-box position="1 2.2 -12" width="0.2" height="4" depth="4" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 2 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="1 2.2 -6.5" width="0.2" height="4" depth="3" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1.5 2"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="1 3.8 -9" width="0.2" height="0.8" depth="2" color="#ffffff"
+          material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh; repeat: 1 0.4"></a-box>
+
+        <!-- Roof -->
+        <a-box position="0 4.2 -5" width="20" height="0.4" depth="20" color="#2b2b2b"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="0 4.1 5" width="20.2" height="0.6" depth="0.4" color="#1a1a1a" shadow="cast: true"></a-box>
+      </a-entity>
+
+      <!-- ==========================================
+             REALISTIC INTERACTIVE WINDOWS & DOORS
+             ========================================== -->
+      <!-- Front Facade Glass -->
+      <a-entity id="front-facade-windows" position="0 0 3.8">
+        <a-entity position="-6 2.2 0">
+          <a-box position="1 0.0 0.1" width="2.4" height="3.8" depth="0.05"
+            material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.8; roughness: 0.1"></a-box>
+          <a-entity class="clickable" toggle-door="offset: -2.3" position="-1 0 0">
+            <a-box width="2.4" height="3.8" depth="0.05"
+              material="color: #6699cc; opacity: 0.4; transparent: true; metalness: 0.9"></a-box>
+            <a-box position="1.1 0 0.05" width="0.05" height="0.8" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-box position="0 1.9 0.05" width="5.4" height="0.1" depth="0.2" color="#111"></a-box>
+          <a-box position="0 -1.9 0.05" width="5.4" height="0.1" depth="0.2" color="#111"></a-box>
+          <a-box position="-2.6 0 0" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="2.2 0 0.1" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="-0.1 0 0.05" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+        </a-entity>
+
+        <a-entity position="0 2.2 0">
+          <a-box position="-2.9 0 0" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="2.9 0 0" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="-1.45 0 -0.05" width="2.9" height="3.8" depth="0.05"
+            material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.9; roughness: 0.1"></a-box>
+          <a-entity class="clickable" toggle-door="offset: 2.8" position="1.45 0 0">
+            <a-box width="2.9" height="3.8" depth="0.05"
+              material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.9; roughness: 0.1"></a-box>
+            <a-box position="-1.35 0 0.05" width="0.05" height="1" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-box position="0 1.9 0" width="6" height="0.1" depth="0.2" color="#111"></a-box>
+          <a-box position="0 -1.9 0" width="6" height="0.1" depth="0.2" color="#111"></a-box>
+        </a-entity>
+
+        <a-entity position="6 2.2 0">
+          <a-box position="-1 0 0" width="2.4" height="3.8" depth="0.05"
+            material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.8; roughness: 0.1"></a-box>
+          <a-entity class="clickable" toggle-door="offset: 2.3" position="1 0 0.1">
+            <a-box width="2.4" height="3.8" depth="0.05"
+              material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.8; roughness: 0.1"></a-box>
+            <a-box position="-1.1 0 0.05" width="0.05" height="0.8" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-box position="0 1.9 0.05" width="5.4" height="0.1" depth="0.2" color="#111"></a-box>
+          <a-box position="0 -1.9 0.05" width="5.4" height="0.1" depth="0.2" color="#111"></a-box>
+          <a-box position="-2.2 0 0" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="2.6 0 0.1" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+          <a-box position="0.1 0 0.05" width="0.1" height="3.8" depth="0.2" color="#111"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- Interior Hallway Sliding Doors -->
+      <a-entity id="hallway-doors">
+        <!-- Bedroom 1 to Living Room Door -->
+        <a-entity class="clickable" toggle-door="offset: -1.9" position="-3 1.7 -1" rotation="0 90 0">
+          <a-box width="2" height="3" depth="0.05" material="color: #f0f0f0; metalness: 0.1; roughness: 0.9"></a-box>
+          <a-box position="0.8 0 0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+          <a-box position="0.8 0 -0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+        </a-entity>
+
+        <!-- Kitchen to Living Room Door -->
+        <a-entity class="clickable" toggle-door="offset: 1.9" position="3 1.7 -1" rotation="0 -90 0">
+          <a-box width="2" height="3" depth="0.05" material="color: #f0f0f0; metalness: 0.1; roughness: 0.9"></a-box>
+          <a-box position="0.8 0 0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+          <a-box position="0.8 0 -0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: -1.9" position="-1 1.7 -9" rotation="0 90 0">
+          <a-box width="2" height="3" depth="0.05" material="color: #f0f0f0; metalness: 0.1; roughness: 0.9"></a-box>
+          <a-box position="0.8 0 0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 1.9" position="1 1.7 -9" rotation="0 -90 0">
+          <a-box width="2" height="3" depth="0.05" material="color: #f0f0f0; metalness: 0.1; roughness: 0.9"></a-box>
+          <a-box position="0.8 0 0.05" width="0.05" height="0.3" depth="0.05" color="#333"></a-box>
+        </a-entity>
+
+        <!-- Walkway Entrance Glass Slider -->
+        <a-entity class="clickable" toggle-door="offset: -1.9" position="0 1.7 -5">
+          <a-box width="2" height="3.4" depth="0.05"
+            material="color: #6699cc; opacity: 0.25; transparent: true; metalness: 0.9; roughness: 0.1"></a-box>
+          <a-box position="0.9 0 0.05" width="0.05" height="0.8" depth="0.05" color="#fff"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- ==========================================
+             FURNISHED ROOMS & INTERIOR LIGHTING
+             ========================================== -->
+
+      <!-- 1. LIVING ROOM -->
+      <a-entity id="room-living" position="0 0.2 -1">
+        <a-entity light="type: point; color: #fffaf0; intensity: 0.8; distance: 10; castShadow: true" position="0 3.5 0"
+          class="interior-light"></a-entity>
+
+        <!-- Living Room Curtains (Medium gray, sheer/opaque layered) -->
+        <a-entity class="clickable" toggle-door="offset: -2.8" position="-1.45 2 4.7">
+          <a-entity geometry="primitive: curtain; width: 2.9; height: 3.9; folds: 10; depth: 0.15"
+            material="src: #fabric-tex; repeat: 4 4; color: #8a8d91; side: double; transparent: true; opacity: 0.95"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 2.8" position="1.45 2 4.7">
+          <a-entity geometry="primitive: curtain; width: 2.9; height: 3.9; folds: 10; depth: 0.15"
+            material="src: #fabric-tex; repeat: 4 4; color: #8a8d91; side: double; transparent: true; opacity: 0.95"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity id="living-ceiling-fan" position="0 3.8 0">
+          <a-cylinder position="0 0.1 0" radius="0.05" height="0.2" color="#111"></a-cylinder>
+          <a-entity spin="speed: 150">
+            <a-sphere position="0 -0.05 0" radius="0.12" color="#fff"
+              material="emissive: #fff; emissiveIntensity: 0.8"></a-sphere>
+            <a-box position="0.5 0 0" width="0.8" height="0.02" depth="0.1" color="#4a2e1b"></a-box>
+            <a-box position="-0.5 0 0" width="0.8" height="0.02" depth="0.1" color="#4a2e1b"></a-box>
+            <a-box position="0 0 0.5" width="0.1" height="0.02" depth="0.8" color="#4a2e1b"></a-box>
+            <a-box position="0 0 -0.5" width="0.1" height="0.02" depth="0.8" color="#4a2e1b"></a-box>
+          </a-entity>
+        </a-entity>
+        <a-entity position="2.8 1.5 4.6" class="clickable" day-night-toggle>
+          <a-box position="0 0 0" width="0.15" height="0.3" depth="0.05" color="#fff"></a-box>
+          <a-box class="switch-toggle" position="0 0.05 0.02" width="0.05" height="0.1" depth="0.05"
+            color="#ccc"></a-box>
+        </a-entity>
+
+        <!-- Wall-mounted AC Unit -->
+        <a-entity position="-2 3.2 -3.8">
+          <a-box width="1.2" height="0.4" depth="0.2" color="#e2e2e2" material="roughness: 0.4"></a-box>
+          <a-box position="0 -0.15 0.12" width="1.1" height="0.05" depth="0.05" color="#555"></a-box>
+          <a-cylinder position="0.4 0 0.1" radius="0.03" height="0.02" rotation="90 0 0" color="#333"></a-cylinder>
+        </a-entity>
+
+        <!-- Area Rug -->
+        <a-plane position="-0.5 0.02 0" rotation="-90 0 0" width="4.5" height="3"
+          material="src: #fabric-tex; repeat: 4.5 3; color: #a5b9b6; roughness: 1"></a-plane>
+
+        <!-- Sectional Sofa -->
+        <a-entity position="-1 0 0">
+          <a-box position="0 0.5 -1.2" width="3.5" height="0.6" depth="0.4"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 3.5 0.6; roughness: 0.6; metalness: 0.2"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-1.55 0.5 0.1" width="0.4" height="0.6" depth="2.2"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 2.2 0.6; roughness: 0.6"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.2 0.25 -0.6" width="3.1" height="0.3" depth="0.8"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 3.1 0.8; roughness: 0.6"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-1.15 0.25 0.4" width="0.8" height="0.3" depth="1.6"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 0.8 1.6; roughness: 0.6"
+            shadow="cast: true; receive: true"></a-box>
+        </a-entity>
+
+        <!-- Glass Coffee Table -->
+        <a-entity position="-0.3 0.35 0.8">
+          <a-box position="0 0.15 0" width="1.6" height="0.02" depth="0.8" color="#fff"
+            material="transparent: true; opacity: 0.4; metalness: 0.9; roughness: 0.1" shadow="cast: true"></a-box>
+          <a-cylinder position="-0.7 -0.15 -0.35" radius="0.03" height="0.3" color="#111"></a-cylinder>
+          <a-cylinder position="0.7 -0.15 -0.35" radius="0.03" height="0.3" color="#111"></a-cylinder>
+          <a-cylinder position="-0.7 -0.15 0.35" radius="0.03" height="0.3" color="#111"></a-cylinder>
+          <a-cylinder position="0.7 -0.15 0.35" radius="0.03" height="0.3" color="#111"></a-cylinder>
+        </a-entity>
+
+        <!-- TV Entertainment System -->
+        <a-entity position="2.8 0 1.5" rotation="0 -90 0">
+          <!-- Floating Wooden Console -->
+          <a-box position="0 0.4 0" width="2.4" height="0.2" depth="0.4"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.4 0.4"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.25 0" width="2.3" height="0.2" depth="0.35" color="#111"
+            shadow="cast: true; receive: true"></a-box>
+          <!-- 85-inch OLED TV -->
+          <a-box position="0 1.6 -0.16" width="2.4" height="1.3" depth="0.04" color="#050505"
+            material="roughness: 0.1; metalness: 0.9"></a-box>
+          <!-- Glowing Screen (Standby/Media) -->
+          <a-plane position="0 1.6 -0.135" width="2.35" height="1.25" src="#screen-01"
+            material="emissive: #fff; emissiveIntensity: 0.2; roughness: 0.1"></a-plane>
+          <!-- Left/Right Speakers -->
+          <a-box position="-1.4 1.2 -0.1" width="0.2" height="1" depth="0.15" color="#1a1a1a"
+            material="roughness: 0.9"></a-box>
+          <a-box position="1.4 1.2 -0.1" width="0.2" height="1" depth="0.15" color="#1a1a1a"
+            material="roughness: 0.9"></a-box>
+        </a-entity>
+
+        <!-- Wall Decor (Frames) -->
+        <a-entity position="0 2 -3.9">
+          <a-box position="-1 0 0" width="0.7" height="0.9" depth="0.05" color="#fff" material="src: #wood-col"></a-box>
+          <a-plane position="-1 0 0.03" width="0.6" height="0.8" src="#art-01"></a-plane>
+          <a-box position="1 0 0" width="0.7" height="0.9" depth="0.05" color="#fff" material="src: #wood-col"></a-box>
+          <a-plane position="1 0 0.03" width="0.6" height="0.8" src="#art-02"></a-plane>
+        </a-entity>
+
+        <!-- TV Stand -->
+        <a-entity position="2.8 0 0" rotation="0 -90 0">
+          <a-box position="0 1.4 0" width="3" height="1.6" depth="0.05" color="#050505"
+            material="metalness: 0.9; roughness: 0.1" shadow="cast: true"></a-box>
+          <a-plane position="0 1.4 0.03" width="2.9" height="1.5" color="#1a2b3c"
+            material="emissive: #1a2b3c; emissiveIntensity: 0.3"></a-plane>
+          <a-box position="0 0.3 0.1" width="4" height="0.4" depth="0.6" color="#30241c"
+            shadow="cast: true; receive: true"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- 2. BEDROOM 1 (Master Front Left) -->
+      <a-entity id="room-bedroom1" position="-6 0.2 -2">
+        <a-entity light="type: point; color: #fffaf0; intensity: 0.4; distance: 8" position="0 3 0"
+          class="interior-light"></a-entity>
+
+        <!-- Ceiling Fan -->
+        <a-entity class="bedroom-ceiling-fan" position="0 3.8 0">
+          <a-cylinder position="0 0.1 0" radius="0.05" height="0.2" color="#111"></a-cylinder>
+          <a-entity spin="speed: 150">
+            <a-sphere position="0 -0.05 0" radius="0.12" color="#fff"
+              material="emissive: #fff; emissiveIntensity: 0.4"></a-sphere>
+            <a-box position="0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="-0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 -0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+          </a-entity>
+        </a-entity>
+
+        <!-- Wall-mounted AC Unit -->
+        <a-entity position="-0.5 3.2 -2.8">
+          <a-box width="1" height="0.3" depth="0.2" color="#e2e2e2" material="roughness: 0.4"></a-box>
+          <a-box position="0 -0.1 0.12" width="0.9" height="0.05" depth="0.05" color="#555"></a-box>
+        </a-entity>
+
+        <!-- Area Rug -->
+        <a-plane position="-0.5 0.02 -0.8" rotation="-90 0 0" width="4" height="4"
+          material="src: #fabric-tex; repeat: 4 4; color: #b8b0a9; roughness: 1"></a-plane>
+
+        <!-- Fully Furnished Bed -->
+        <a-entity position="-0.5 0 -1">
+          <a-box position="0 0.2 0" width="2.2" height="0.2" depth="2.4"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.2 2.4"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.8 -1.1" width="2.4" height="1.2" depth="0.1"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.4 1.2"
+            shadow="cast: true"></a-box>
+          <a-box position="0 0.4 0" width="2" height="0.3" depth="2.2"
+            material="src: #fabric-tex; repeat: 2 2.2; roughness: 1" shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.42 0.4" width="2.05" height="0.3" depth="1.4" color="#424c52"
+            material="src: #fabric-tex; repeat: 2 1.4; roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+          <!-- Pillows -->
+          <a-box position="-0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+          <a-box position="0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+        </a-entity>
+
+        <!-- Dual Bedside Tables & Lamps -->
+        <a-entity position="-1.9 0 -1.8">
+          <a-box position="0 0.25 0" width="0.5" height="0.5" depth="0.4" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh" shadow="cast: true"></a-box>
+          <a-cylinder position="0 0.55 0" radius="0.02" height="0.3" color="#eee"></a-cylinder>
+          <a-cone position="0 0.7 0" radius-bottom="0.15" radius-top="0.05" height="0.2" color="#fff"
+            material="emissive: #fff; emissiveIntensity: 0.4"></a-cone>
+        </a-entity>
+        <a-entity position="0.9 0 -1.8">
+          <a-box position="0 0.25 0" width="0.5" height="0.5" depth="0.4" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh" shadow="cast: true"></a-box>
+          <a-cylinder position="0 0.55 0" radius="0.02" height="0.3" color="#eee"></a-cylinder>
+          <a-cone position="0 0.7 0" radius-bottom="0.15" radius-top="0.05" height="0.2" color="#fff"
+            material="emissive: #fff; emissiveIntensity: 0.4"></a-cone>
+        </a-entity>
+
+        <!-- Wardrobe -->
+        <a-entity position="-2.6 1.4 1">
+          <a-box width="0.6" height="2.8" depth="2" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 0.6 2.8"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.31 0 0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-box position="0.31 0 -0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-cylinder position="0.33 0 0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+          <a-cylinder position="0.33 0 -0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+        </a-entity>
+
+        <!-- Interactive Curtains -->
+        <a-entity class="clickable" toggle-door="offset: -1.8" position="-1.2 2 5.5">
+          <a-entity geometry="primitive: curtain; width: 2.4; height: 3.9; folds: 8; depth: 0.12" rotation="0 180 0"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 1.8" position="1.2 2 5.5">
+          <a-entity geometry="primitive: curtain; width: 2.4; height: 3.9; folds: 8; depth: 0.12" rotation="0 180 0"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+
+        <!-- En-Suite Bathroom 1 -->
+        <a-entity class="en-suite" position="2 0 -1.75">
+          <!-- Bathroom Floor (Marble) -->
+          <a-plane position="0 0.05 0" rotation="-90 0 0" width="2" height="2.5"
+            material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 2 2.5"
+            shadow="receive: true"></a-plane>
+          <!-- Partition Walls -->
+          <a-box position="-1 1.1 0" width="0.1" height="2.6" depth="2.5" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-0.5 1.1 1.25" width="1" height="2.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.5 2.1 1.25" width="1" height="0.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"></a-box>
+
+          <!-- Glass Door & Privacy Curtain -->
+          <a-entity class="clickable" toggle-door="offset: -0.9" position="0.5 0.9 1.25">
+            <a-box width="1" height="1.8" depth="0.05"
+              material="color: #6699cc; transparent: true; opacity: 0.3; roughness: 0.1; metalness: 0.8"></a-box>
+            <a-box position="-0.4 0 0.05" width="0.05" height="0.4" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-entity position="0.9 1.1 1.15">
+            <a-cylinder radius="0.08" height="2.2" scale="1 1 0.3" color="#f0f0f0"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="-0.05 0 0" radius="0.06" height="2.2" scale="1 1 0.4" color="#dcdcdc"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="0.05 0 0" radius="0.07" height="2.2" scale="1 1 0.35" color="#e8e8e8"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+          </a-entity>
+
+          <!-- Toilet -->
+          <a-entity position="0.5 0 -0.8">
+            <a-cylinder position="0 0.2 0" radius="0.2" height="0.4" color="#fff"
+              material="roughness: 0.1; metalness: 0.1"></a-cylinder>
+            <a-torus position="0 0.42 0.05" radius="0.18" radiusTubular="0.04" rotation="90 0 0" color="#ffffff"
+              material="roughness: 0.1"></a-torus>
+            <a-box position="0 0.5 -0.3" width="0.4" height="0.6" depth="0.2" color="#fff"
+              material="roughness: 0.1"></a-box>
+            <a-box position="-0.25 0.6 -0.2" width="0.05" height="0.05" depth="0.05" color="#aaa"
+              material="metalness: 0.8"></a-box>
+          </a-entity>
+
+          <!-- Walk-in Shower -->
+          <a-entity position="-0.4 0 0.4">
+            <a-plane position="0 0.06 0" rotation="-90 0 0" width="1" height="1" color="#b3b3b3"></a-plane>
+            <a-box position="-0.5 1.1 0" width="0.02" height="2.2" depth="1"
+              material="color: #6699cc; transparent: true; opacity: 0.4; roughness: 0.1"></a-box>
+            <a-cylinder position="-0.4 2 -0.4" radius="0.03" height="0.05" rotation="45 45 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="-0.4 2.1 -0.45" radius="0.01" height="0.2" rotation="45 0 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="0 0.07 0" radius="0.05" height="0.01" color="#333"></a-cylinder>
+          </a-entity>
+
+          <!-- Towel Heater -->
+          <a-entity position="-0.9 1 -0.5" rotation="0 90 0">
+            <a-cylinder position="-0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.4 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.0 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 -0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+          </a-entity>
+
+          <!-- Sink Vanity & Mirror -->
+          <a-entity position="0.9 0 0.2" rotation="0 -90 0">
+            <a-box position="0 0.7 0" width="0.8" height="0.4" depth="0.4" color="#333"
+              material="roughness: 0.2; metalness: 0.8"></a-box>
+            <a-box position="0 0.9 0" width="0.85" height="0.04" depth="0.45"
+              material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 0.85 0.45"></a-box>
+            <a-cylinder position="0 0.95 0" radius="0.2" height="0.15" color="#fff"
+              material="roughness: 0.1"></a-cylinder>
+            <a-cylinder position="0 1.05 -0.15" radius="0.015" height="0.2" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 1.15 -0.1" radius="0.015" height="0.08" rotation="90 0 0" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-plane position="0 1.6 -0.18" width="0.6" height="0.8" color="#bccdc7"
+              material="roughness: 0; metalness: 1"></a-plane>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <!-- 3. KITCHEN -->
+      <a-entity id="room-kitchen" position="6 0.2 -1">
+        <a-entity light="type: point; color: #fffaf0; intensity: 0.6; distance: 8" position="0 3 0"
+          class="interior-light"></a-entity>
+
+        <!-- Kitchen Curtains (Matching floor-to-ceiling style) -->
+        <a-entity class="clickable" toggle-door="offset: -2" position="-1.2 2 4.7">
+          <a-entity geometry="primitive: curtain; width: 2.4; height: 3.9; folds: 8; depth: 0.12" rotation="0 180 0"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 2" position="1.2 2 4.7">
+          <a-entity geometry="primitive: curtain; width: 2.4; height: 3.9; folds: 8; depth: 0.12" rotation="0 180 0"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+
+        <!-- Modern Refrigerator -->
+        <a-entity position="2 1.2 -3.3">
+          <a-box width="1.2" height="2.4" depth="1" color="#eaeaea" material="roughness: 0.2; metalness: 0.8"
+            shadow="cast: true"></a-box>
+          <!-- Fridge Handles -->
+          <a-cylinder position="-0.1 0.2 0.52" radius="0.02" height="0.8" color="#333"></a-cylinder>
+          <a-cylinder position="0.1 0.2 0.52" radius="0.02" height="0.8" color="#333"></a-cylinder>
+        </a-entity>
+
+        <!-- Back Wall Cabinetry & Counter -->
+        <a-entity position="-1 0 -3.4">
+          <a-box position="0 0.4 0" width="4.8" height="0.8" depth="0.8" color="#d3d9e0"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.82 0" width="4.9" height="0.04" depth="0.85" color="#1c1c1c"
+            material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 4.9 0.85; metalness: 0.4"></a-box>
+          <!-- Stove Top & Sink -->
+          <a-box position="1.2 0.83 0" width="0.8" height="0.02" depth="0.6" color="#0a0a0a"></a-box>
+          <a-box position="-1 0.82 0" width="0.8" height="0.05" depth="0.5" color="#5a5a5a"
+            material="metalness: 0.9"></a-box>
+          <!-- Overhead Cabinets -->
+          <a-box position="0 2.2 -0.2" width="4.8" height="1.2" depth="0.4" color="#d3d9e0" shadow="cast: true"></a-box>
+          <!-- Microwave -->
+          <a-entity position="2 1 -0.1">
+            <a-box width="0.6" height="0.4" depth="0.4" color="#222" material="roughness: 0.3; metalness: 0.8"></a-box>
+            <a-plane position="-0.1 0 0.21" width="0.3" height="0.25" color="#111"
+              material="metalness: 0.9; opacity: 0.8"></a-plane>
+            <a-box position="0.2 0 0.21" width="0.05" height="0.3" depth="0.02" color="#eee"></a-box>
+          </a-entity>
+        </a-entity>
+
+        <!-- Central Kitchen Island -->
+        <a-entity position="0 0 -1">
+          <a-box position="0 0.45 0" width="3.5" height="0.9" depth="1" color="#f5f5f5"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.92 0" width="3.8" height="0.06" depth="1.4"
+            material="src: #marble-alt; repeat: 2 1; roughness: 0.2; metalness: 0"></a-box>
+          <!-- Decorative Bowl on Island -->
+          <a-sphere position="0 1 0" radius="0.2" color="#555" material="src: #stone-alt" scale="1 0.3 1"></a-sphere>
+        </a-entity>
+
+        <!-- Dining Table & Chairs -->
+        <a-entity position="-1.5 0 2">
+          <a-box position="0 0.75 0" width="2" height="0.05" depth="1.2" color="#fff"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh" shadow="cast: true"></a-box>
+          <a-cylinder position="-0.8 0.35 -0.4" radius="0.04" height="0.7" color="#333"></a-cylinder>
+          <a-cylinder position="0.8 0.35 -0.4" radius="0.04" height="0.7" color="#333"></a-cylinder>
+          <a-cylinder position="-0.8 0.35 0.4" radius="0.04" height="0.7" color="#333"></a-cylinder>
+          <a-cylinder position="0.8 0.35 0.4" radius="0.04" height="0.7" color="#333"></a-cylinder>
+
+          <a-entity position="-0.5 0 -0.8">
+            <a-box position="0 0.45 0" width="0.4" height="0.05" depth="0.4" color="#bd9d7d"></a-box>
+            <a-box position="0 0.9 -0.15" width="0.4" height="0.5" depth="0.05" color="#bd9d7d"></a-box>
+            <a-cylinder position="-0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="-0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+          </a-entity>
+          <a-entity position="0.5 0 -0.8">
+            <a-box position="0 0.45 0" width="0.4" height="0.05" depth="0.4" color="#bd9d7d"></a-box>
+            <a-box position="0 0.9 -0.15" width="0.4" height="0.5" depth="0.05" color="#bd9d7d"></a-box>
+            <a-cylinder position="-0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="-0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+          </a-entity>
+          <a-entity position="0 0 0.8" rotation="0 180 0">
+            <a-box position="0 0.45 0" width="0.4" height="0.05" depth="0.4" color="#bd9d7d"></a-box>
+            <a-box position="0 0.9 -0.15" width="0.4" height="0.5" depth="0.05" color="#bd9d7d"></a-box>
+            <a-cylinder position="-0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="-0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+            <a-cylinder position="0.15 0.22 -0.15" radius="0.02" height="0.45" color="#333"></a-cylinder>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <!-- 4. BEDROOM 2 (Rear Left) -->
+      <a-entity id="room-bedroom2" position="-4.5 0.2 -10">
+        <a-entity light="type: point; color: #fffaf0; intensity: 0.4; distance: 8" position="0 3 0"
+          class="interior-light"></a-entity>
+
+        <!-- Ceiling Fan -->
+        <a-entity class="bedroom-ceiling-fan" position="0 3.8 0">
+          <a-cylinder position="0 0.1 0" radius="0.05" height="0.2" color="#111"></a-cylinder>
+          <a-entity spin="speed: 150">
+            <a-sphere position="0 -0.05 0" radius="0.12" color="#fff"
+              material="emissive: #fff; emissiveIntensity: 0.4"></a-sphere>
+            <a-box position="0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="-0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 -0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+          </a-entity>
+        </a-entity>
+
+        <!-- Wall-mounted AC Unit -->
+        <a-entity position="0 3.2 -2.8">
+          <a-box width="1" height="0.3" depth="0.2" color="#e2e2e2" material="roughness: 0.4"></a-box>
+          <a-box position="0 -0.1 0.12" width="0.9" height="0.05" depth="0.05" color="#555"></a-box>
+        </a-entity>
+
+        <!-- Area Rug -->
+        <a-plane position="0 0.02 -0.8" rotation="-90 0 0" width="4" height="4"
+          material="src: #fabric-tex; repeat: 4 4; color: #a3ccb8; roughness: 1"></a-plane>
+
+        <!-- Fully Furnished Bed -->
+        <a-entity position="0 0 -1">
+          <a-box position="0 0.2 0" width="2.2" height="0.2" depth="2.4"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.2 2.4"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.8 -1.1" width="2.4" height="1.2" depth="0.1"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.4 1.2"
+            shadow="cast: true"></a-box>
+          <a-box position="0 0.4 0" width="2" height="0.3" depth="2.2"
+            material="src: #fabric-tex; repeat: 2 2.2; roughness: 1" shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.42 0.4" width="2.05" height="0.3" depth="1.4" color="#2e8b57"
+            material="src: #fabric-tex; repeat: 2 1.4; roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+          <!-- Pillows -->
+          <a-box position="-0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+          <a-box position="0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+        </a-entity>
+
+        <!-- Wardrobe -->
+        <a-entity position="-2.6 1.4 2">
+          <a-box width="0.6" height="2.8" depth="2" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 0.6 2.8"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.31 0 0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-box position="0.31 0 -0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-cylinder position="0.33 0 0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+          <a-cylinder position="0.33 0 -0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+        </a-entity>
+
+        <!-- Interactive Curtains -->
+        <a-entity class="clickable" toggle-door="offset: -1.8" position="-1.5 2 -3.7">
+          <a-entity geometry="primitive: curtain; width: 2; height: 3.9; folds: 7; depth: 0.12"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 1.8" position="0.5 2 -3.7">
+          <a-entity geometry="primitive: curtain; width: 2; height: 3.9; folds: 7; depth: 0.12"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+
+        <!-- En-Suite Bathroom 2 -->
+        <a-entity class="en-suite" position="-2.5 0 -2.75">
+          <!-- Bathroom Floor (Marble) -->
+          <a-plane position="0 0.05 0" rotation="-90 0 0" width="2" height="2.5"
+            material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 2 2.5"
+            shadow="receive: true"></a-plane>
+          <!-- Partition Walls -->
+          <a-box position="1 1.1 0" width="0.1" height="2.6" depth="2.5" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.5 1.1 1.25" width="1" height="2.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-0.5 2.1 1.25" width="1" height="0.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"></a-box>
+
+          <!-- Glass Door & Privacy Curtain -->
+          <a-entity class="clickable" toggle-door="offset: 0.9" position="-0.5 0.9 1.25">
+            <a-box width="1" height="1.8" depth="0.05"
+              material="color: #6699cc; transparent: true; opacity: 0.3; roughness: 0.1; metalness: 0.8"></a-box>
+            <a-box position="0.4 0 0.05" width="0.05" height="0.4" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-entity position="-0.9 1.1 1.15">
+            <a-cylinder radius="0.08" height="2.2" scale="1 1 0.3" color="#f0f0f0"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="0.05 0 0" radius="0.06" height="2.2" scale="1 1 0.4" color="#dcdcdc"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="-0.05 0 0" radius="0.07" height="2.2" scale="1 1 0.35" color="#e8e8e8"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+          </a-entity>
+
+          <!-- Toilet -->
+          <a-entity position="-0.5 0 -0.8">
+            <a-cylinder position="0 0.2 0" radius="0.2" height="0.4" color="#fff"
+              material="roughness: 0.1; metalness: 0.1"></a-cylinder>
+            <a-torus position="0 0.42 0.05" radius="0.18" radiusTubular="0.04" rotation="90 0 0" color="#ffffff"
+              material="roughness: 0.1"></a-torus>
+            <a-box position="0 0.5 -0.3" width="0.4" height="0.6" depth="0.2" color="#fff"
+              material="roughness: 0.1"></a-box>
+            <a-box position="-0.25 0.6 -0.2" width="0.05" height="0.05" depth="0.05" color="#aaa"
+              material="metalness: 0.8"></a-box>
+          </a-entity>
+
+          <!-- Walk-in Shower -->
+          <a-entity position="0.4 0 0.4">
+            <a-plane position="0 0.06 0" rotation="-90 0 0" width="1" height="1" color="#b3b3b3"></a-plane>
+            <a-box position="0.5 1.1 0" width="0.02" height="2.2" depth="1"
+              material="color: #6699cc; transparent: true; opacity: 0.4; roughness: 0.1"></a-box>
+            <a-cylinder position="0.4 2 -0.4" radius="0.03" height="0.05" rotation="45 -45 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="0.4 2.1 -0.45" radius="0.01" height="0.2" rotation="45 0 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="0 0.07 0" radius="0.05" height="0.01" color="#333"></a-cylinder>
+          </a-entity>
+
+          <!-- Towel Heater -->
+          <a-entity position="0.9 1 -0.5" rotation="0 -90 0">
+            <a-cylinder position="-0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.4 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.0 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 -0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+          </a-entity>
+
+          <!-- Sink Vanity & Mirror -->
+          <a-entity position="-0.9 0 0.2" rotation="0 90 0">
+            <a-box position="0 0.7 0" width="0.8" height="0.4" depth="0.4" color="#333"
+              material="roughness: 0.2; metalness: 0.8"></a-box>
+            <a-box position="0 0.9 0" width="0.85" height="0.04" depth="0.45"
+              material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 0.85 0.45"></a-box>
+            <a-cylinder position="0 0.95 0" radius="0.2" height="0.15" color="#fff"
+              material="roughness: 0.1"></a-cylinder>
+            <a-cylinder position="0 1.05 -0.15" radius="0.015" height="0.2" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 1.15 -0.1" radius="0.015" height="0.08" rotation="90 0 0" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-plane position="0 1.6 -0.18" width="0.6" height="0.8" color="#bccdc7"
+              material="roughness: 0; metalness: 1"></a-plane>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <!-- 5. BEDROOM 3 (Rear Right) -->
+      <a-entity id="room-bedroom3" position="4.5 0.2 -10">
+        <a-entity light="type: point; color: #fffaf0; intensity: 0.4; distance: 8" position="0 3 0"
+          class="interior-light"></a-entity>
+
+        <!-- Ceiling Fan -->
+        <a-entity class="bedroom-ceiling-fan" position="0 3.8 0">
+          <a-cylinder position="0 0.1 0" radius="0.05" height="0.2" color="#111"></a-cylinder>
+          <a-entity spin="speed: 150">
+            <a-sphere position="0 -0.05 0" radius="0.12" color="#fff"
+              material="emissive: #fff; emissiveIntensity: 0.4"></a-sphere>
+            <a-box position="0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="-0.5 0 0" width="0.8" height="0.02" depth="0.1"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+            <a-box position="0 0 -0.5" width="0.1" height="0.02" depth="0.8"
+              material="src: #wood-col; roughnessMap: #wood-rgh; roughness: 0.8" shadow="cast: true"></a-box>
+          </a-entity>
+        </a-entity>
+
+        <!-- Wall-mounted AC Unit -->
+        <a-entity position="0 3.2 -2.8">
+          <a-box width="1" height="0.3" depth="0.2" color="#e2e2e2" material="roughness: 0.4"></a-box>
+          <a-box position="0 -0.1 0.12" width="0.9" height="0.05" depth="0.05" color="#555"></a-box>
+        </a-entity>
+
+        <!-- Area Rug -->
+        <a-plane position="0 0.02 -0.8" rotation="-90 0 0" width="4" height="4"
+          material="src: #fabric-tex; repeat: 4 4; color: #cc8b8b; roughness: 1"></a-plane>
+
+        <!-- Fully Furnished Bed -->
+        <a-entity position="0 0 -1">
+          <a-box position="0 0.2 0" width="2.2" height="0.2" depth="2.4"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.2 2.4"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.8 -1.1" width="2.4" height="1.2" depth="0.1"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 2.4 1.2"
+            shadow="cast: true"></a-box>
+          <a-box position="0 0.4 0" width="2" height="0.3" depth="2.2"
+            material="src: #fabric-tex; repeat: 2 2.2; roughness: 1" shadow="cast: true; receive: true"></a-box>
+          <a-box position="0 0.42 0.4" width="2.05" height="0.3" depth="1.4" color="#8b0000"
+            material="src: #fabric-tex; repeat: 2 1.4; roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+          <!-- Pillows -->
+          <a-box position="-0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+          <a-box position="0.5 0.6 -0.8" rotation="20 0 0" width="0.7" height="0.4" depth="0.2" color="#fff"
+            shadow="cast: true"></a-box>
+        </a-entity>
+
+        <!-- Bedside Tables & Lamps -->
+        <a-entity position="-1.4 0 -1.8">
+          <a-box position="0 0.25 0" width="0.5" height="0.5" depth="0.4" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh" shadow="cast: true"></a-box>
+          <a-cylinder position="0 0.55 0" radius="0.02" height="0.3" color="#eee"></a-cylinder>
+          <a-cone position="0 0.7 0" radius-bottom="0.15" radius-top="0.05" height="0.2" color="#fff"
+            material="emissive: #fff; emissiveIntensity: 0.4"></a-cone>
+        </a-entity>
+        <a-entity position="1.4 0 -1.8">
+          <a-box position="0 0.25 0" width="0.5" height="0.5" depth="0.4" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh" shadow="cast: true"></a-box>
+          <a-cylinder position="0 0.55 0" radius="0.02" height="0.3" color="#eee"></a-cylinder>
+          <a-cone position="0 0.7 0" radius-bottom="0.15" radius-top="0.05" height="0.2" color="#fff"
+            material="emissive: #fff; emissiveIntensity: 0.4"></a-cone>
+        </a-entity>
+
+        <!-- Wardrobe -->
+        <a-entity position="2.6 1.4 2">
+          <a-box width="0.6" height="2.8" depth="2" color="#444"
+            material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 0.6 2.8"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-0.31 0 0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-box position="-0.31 0 -0.48" width="0.02" height="2.7" depth="0.9" color="#f5f5f5"
+            material="roughness: 0.1"></a-box>
+          <a-cylinder position="-0.33 0 0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+          <a-cylinder position="-0.33 0 -0.1" radius="0.015" height="0.6" color="#333"
+            material="metalness: 0.8"></a-cylinder>
+        </a-entity>
+
+        <!-- Interactive Curtains -->
+        <a-entity class="clickable" toggle-door="offset: -1.8" position="-1.5 2 -3.7">
+          <a-entity geometry="primitive: curtain; width: 2; height: 3.9; folds: 7; depth: 0.12"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+        <a-entity class="clickable" toggle-door="offset: 1.8" position="0.5 2 -3.7">
+          <a-entity geometry="primitive: curtain; width: 2; height: 3.9; folds: 7; depth: 0.12"
+            material="src: #fabric-tex; repeat: 4 4; color: #1a2a40; side: double; roughness: 1"
+            shadow="cast: true"></a-entity>
+        </a-entity>
+
+        <!-- En-Suite Bathroom 3 -->
+        <a-entity class="en-suite" position="-2.5 0 -2.75">
+          <!-- Bathroom Floor (Marble) -->
+          <a-plane position="0 0.05 0" rotation="-90 0 0" width="2" height="2.5"
+            material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 2 2.5"
+            shadow="receive: true"></a-plane>
+          <!-- Partition Walls -->
+          <a-box position="1 1.1 0" width="0.1" height="2.6" depth="2.5" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="0.5 1.1 1.25" width="1" height="2.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"
+            shadow="cast: true; receive: true"></a-box>
+          <a-box position="-0.5 2.1 1.25" width="1" height="0.6" depth="0.1" color="#fff"
+            material="src: #wall-col; normalMap: #wall-nrm; roughnessMap: #wall-rgh"></a-box>
+
+          <!-- Glass Door & Privacy Curtain -->
+          <a-entity class="clickable" toggle-door="offset: 0.9" position="-0.5 0.9 1.25">
+            <a-box width="1" height="1.8" depth="0.05"
+              material="color: #6699cc; transparent: true; opacity: 0.3; roughness: 0.1; metalness: 0.8"></a-box>
+            <a-box position="0.4 0 0.05" width="0.05" height="0.4" depth="0.05" color="#fff"></a-box>
+          </a-entity>
+          <a-entity position="-0.9 1.1 1.15">
+            <a-cylinder radius="0.08" height="2.2" scale="1 1 0.3" color="#f0f0f0"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="0.05 0 0" radius="0.06" height="2.2" scale="1 1 0.4" color="#dcdcdc"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+            <a-cylinder position="-0.05 0 0" radius="0.07" height="2.2" scale="1 1 0.35" color="#e8e8e8"
+              material="src: #fabric-tex; repeat: 1 5"></a-cylinder>
+          </a-entity>
+
+          <!-- Toilet -->
+          <a-entity position="-0.5 0 -0.8">
+            <a-cylinder position="0 0.2 0" radius="0.2" height="0.4" color="#fff"
+              material="roughness: 0.1; metalness: 0.1"></a-cylinder>
+            <a-torus position="0 0.42 0.05" radius="0.18" radiusTubular="0.04" rotation="90 0 0" color="#ffffff"
+              material="roughness: 0.1"></a-torus>
+            <a-box position="0 0.5 -0.3" width="0.4" height="0.6" depth="0.2" color="#fff"
+              material="roughness: 0.1"></a-box>
+            <a-box position="-0.25 0.6 -0.2" width="0.05" height="0.05" depth="0.05" color="#aaa"
+              material="metalness: 0.8"></a-box>
+          </a-entity>
+
+          <!-- Walk-in Shower -->
+          <a-entity position="0.4 0 0.4">
+            <a-plane position="0 0.06 0" rotation="-90 0 0" width="1" height="1" color="#b3b3b3"></a-plane>
+            <a-box position="0.5 1.1 0" width="0.02" height="2.2" depth="1"
+              material="color: #6699cc; transparent: true; opacity: 0.4; roughness: 0.1"></a-box>
+            <a-cylinder position="0.4 2 -0.4" radius="0.03" height="0.05" rotation="45 -45 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="0.4 2.1 -0.45" radius="0.01" height="0.2" rotation="45 0 0" color="#aaa"
+              material="metalness: 0.8"></a-cylinder>
+            <a-cylinder position="0 0.07 0" radius="0.05" height="0.01" color="#333"></a-cylinder>
+          </a-entity>
+
+          <!-- Towel Heater -->
+          <a-entity position="0.9 1 -0.5" rotation="0 -90 0">
+            <a-cylinder position="-0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0.3 0 0.05" radius="0.01" height="1" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.4 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 0.0 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 -0.2 0.08" radius="0.01" height="0.6" rotation="0 0 90" color="#ddd"
+              material="metalness: 0.9"></a-cylinder>
+          </a-entity>
+
+          <!-- Sink Vanity & Mirror -->
+          <a-entity position="-0.9 0 0.2" rotation="0 90 0">
+            <a-box position="0 0.7 0" width="0.8" height="0.4" depth="0.4" color="#333"
+              material="roughness: 0.2; metalness: 0.8"></a-box>
+            <a-box position="0 0.9 0" width="0.85" height="0.04" depth="0.45"
+              material="src: #marble-col; normalMap: #marble-nrm; roughnessMap: #marble-rgh; repeat: 0.85 0.45"></a-box>
+            <a-cylinder position="0 0.95 0" radius="0.2" height="0.15" color="#fff"
+              material="roughness: 0.1"></a-cylinder>
+            <a-cylinder position="0 1.05 -0.15" radius="0.015" height="0.2" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-cylinder position="0 1.15 -0.1" radius="0.015" height="0.08" rotation="90 0 0" color="#ccc"
+              material="metalness: 0.9"></a-cylinder>
+            <a-plane position="0 1.6 -0.18" width="0.6" height="0.8" color="#bccdc7"
+              material="roughness: 0; metalness: 1"></a-plane>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <!-- ==========================================
+             ANIMATED SWIMMING POOL (OUTSIDE)
+             ========================================== -->
+      <a-entity id="pool-area" position="-4 0.11 8.5" scale="0.7 0.7 0.7">
+        <a-box position="0 0.6 -2.75" width="10" height="1.2" depth="0.5" color="#111" material="roughness: 0.9"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="0 0.6 3.25" width="10" height="1.2" depth="0.5" color="#111" material="roughness: 0.9"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="-4.75 0.6 0.25" width="0.5" height="1.2" depth="5.5" color="#111" material="roughness: 0.9"
+          shadow="cast: true; receive: true"></a-box>
+        <a-box position="4.75 0.6 0.25" width="0.5" height="1.2" depth="5.5" color="#111" material="roughness: 0.9"
+          shadow="cast: true; receive: true"></a-box>
+
+        <a-entity position="4.3 1.25 -1.5">
+          <a-torus position="-0.1 0.4 0" radius="0.3" radiusTubular="0.03" rotation="0 90 0" color="#fff"
+            material="metalness: 0.9; roughness: 0.1"></a-torus>
+          <a-torus position="-0.7 0.4 0" radius="0.3" radiusTubular="0.03" rotation="0 90 0" color="#fff"
+            material="metalness: 0.9; roughness: 0.1"></a-torus>
+          <a-cylinder position="-0.1 0 0.3" radius="0.03" height="0.1" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.7 0 0.3" radius="0.03" height="0.1" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.1 -0.4 -0.3" radius="0.03" height="1.6" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.7 -0.4 -0.3" radius="0.03" height="1.6" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 0.1 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 -0.3 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 -0.7 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+        </a-entity>
+
+        <a-entity id="pool-stairs" position="0 0 -3.4" shadow="cast: true; receive: true">
+          <a-box position="0 0.2 -0.8" width="4" height="0.2" depth="0.4" color="#6e503b"
+            material="roughness: 0.8"></a-box>
+          <a-box position="0 0.4 -0.4" width="4" height="0.4" depth="0.4" color="#6e503b"
+            material="roughness: 0.8"></a-box>
+          <a-box position="0 0.6 0" width="4" height="0.6" depth="0.8" color="#6e503b"
+            material="roughness: 0.8"></a-box>
+        </a-entity>
+
+        <a-plane position="0 0.6 3" rotation="0 180 0" width="9" height="1.2"
+          material="src: #pool-col; normalMap: #pool-nrm; roughnessMap: #pool-rgh; repeat: 18 2.4; roughness: 0.6; color: #111"></a-plane>
+        <a-plane position="0 0.6 -2.5" width="9" height="1.2"
+          material="src: #pool-col; normalMap: #pool-nrm; roughnessMap: #pool-rgh; repeat: 18 2.4; roughness: 0.6; color: #111"></a-plane>
+        <a-plane position="-4.5 0.6 0.25" rotation="0 90 0" width="5.5" height="1.2"
+          material="src: #pool-col; normalMap: #pool-nrm; roughnessMap: #pool-rgh; repeat: 11 2.4; roughness: 0.6; color: #111"></a-plane>
+        <a-plane position="4.5 0.6 0.25" rotation="0 -90 0" width="5.5" height="1.2"
+          material="src: #pool-col; normalMap: #pool-nrm; roughnessMap: #pool-rgh; repeat: 11 2.4; roughness: 0.6; color: #111"></a-plane>
+        <a-plane position="0 0.05 0.25" rotation="-90 0 0" width="9" height="5.5"
+          material="src: #pool-col; normalMap: #pool-nrm; roughnessMap: #pool-rgh; repeat: 18 11; roughness: 0.8; color: #111"></a-plane>
+
+        <a-box position="0 1.25 -2.75" width="10.4" height="0.1" depth="0.5" color="#222"
+          material="roughness: 0.5"></a-box>
+        <a-box position="0 1.25 3.25" width="10.4" height="0.1" depth="0.5" color="#222"
+          material="roughness: 0.5"></a-box>
+        <a-box position="-4.75 1.25 0.25" width="0.5" height="0.1" depth="5.5" color="#222"
+          material="roughness: 0.5"></a-box>
+        <a-box position="4.75 1.25 0.25" width="0.5" height="0.1" depth="5.5" color="#222"
+          material="roughness: 0.5"></a-box>
+
+        <a-plane position="0 1.1 0.25" rotation="-90 0 0" width="8.9" height="5.3" segments-width="60"
+          segments-height="40"
+          material="src: #water-tex; color: #1c3d52; opacity: 0.7; transparent: true; metalness: 0.9; roughness: 0.1;"
+          water-motion shadow="receive: true"></a-plane>
+
+        <a-sphere position="-3.5 0.5 1" radius="0.1"
+          material="color: #fff; emissive: #4db8ff; emissiveIntensity: 2; transparent: true; opacity: 0.9"></a-sphere>
+        <a-sphere position="3.5 0.5 -1" radius="0.1"
+          material="color: #fff; emissive: #4db8ff; emissiveIntensity: 2; transparent: true; opacity: 0.9"></a-sphere>
+      </a-entity>
+
+    </a-entity>
+
+
+    <!-- ==========================================
+           ARCHITECTURAL SHOWCASE GARAGE & LOUNGE
+           ========================================== -->
+    <a-entity id="garage-area" position="-14 0 10">
+      <!-- 1. Split-Level Ground Overlay -->
+      <!-- Parking Bay Pad (Concrete) -->
+      <a-plane position="-2.5 0.06 0" rotation="-90 0 0" width="5.5" height="16"
+        material="src: #concrete-col; repeat: 2 8; roughness: 0.8; metalness: 0"></a-plane>
+      <!-- Elevated Side Lounge (Wood) -->
+      <a-box position="2.8 0.15 0" width="5" height="0.2" depth="14"
+        material="src: #wood-alt; repeat: 2.5 7; roughness: 0.9"></a-box>
+
+      <!-- 2. Massive Feature Stone Separation Wall -->
+      <a-box position="0.1 1.6 0" width="0.3" height="3.2" depth="14" material="src: #stone-alt; repeat: 6 2"></a-box>
+
+      <!-- 3. Floating Modern Cantilevered Roof -->
+      <a-entity id="garage-roof" position="0 3.3 0">
+        <a-box width="11" height="0.15" depth="14" color="#1a1a1a" shadow="cast: true"></a-box>
+        <!-- Recessed Under-lights -->
+        <a-entity light="type: point; color: #ffbc58; intensity: 0.6; distance: 10" position="-3 -0.5 0"></a-entity>
+        <a-entity light="type: point; color: #ffbc58; intensity: 0.6; distance: 10" position="3 -0.5 0"></a-entity>
+        <!-- Slat Ceiling Detail Under Roof -->
+        <a-box position="0 -0.05 0" width="10.8" height="0.05" depth="13.8"
+          material="src: #wood-alt; repeat: 5 10; opacity: 0.7"></a-box>
+      </a-entity>
+
+      <!-- 4. The Side Lounge Section (On the wooden deck) -->
+      <a-entity id="lounge-furniture" position="3 0.25 0">
+        <!-- Modern Leather Sofa -->
+        <a-entity position="0 0.15 -2" rotation="0 -90 0">
+          <a-box width="4" height="0.4" depth="1"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 4 1; roughness: 0.6"></a-box>
+          <a-box width="4" height="0.8" depth="0.2" position="0 0.4 -0.4"
+            material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 4 0.8; roughness: 0.6"></a-box>
+        </a-entity>
+
+        <!-- Glass Social Fire Table -->
+        <a-entity position="0 0.2 1.5">
+          <a-box width="1.6" height="0.4" depth="1.6" material="src: #stone-alt; repeat: 0.5 0.5"></a-box>
+          <a-box position="0 0.22 0" width="1.8" height="0.05" depth="1.8" color="#fff"
+            material="transparent: true; opacity: 0.4; roughness: 0"></a-box>
+          <!-- Hidden Ember Light -->
+          <a-sphere position="0 0.3 0" radius="0.2" color="#ff7700"
+            material="emissive: #ff7700; emissiveIntensity: 2"></a-sphere>
+        </a-entity>
+
+        <!-- Chairs around the table -->
+        <a-entity id="table-chairs" position="0 0 1.5">
+          <!-- Chair 1 -->
+          <a-entity position="1.1 0 0" rotation="0 -90 0">
+            <a-box position="0 0.4 0" width="0.5" height="0.1" depth="0.5"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1; roughness: 0.6"></a-box>
+            <a-box position="0 0.85 -0.22" width="0.5" height="0.8" depth="0.1"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1.5; roughness: 0.6"></a-box>
+            <a-cylinder position="-0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="-0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+          </a-entity>
+          <!-- Chair 2 -->
+          <a-entity position="-1.1 0 0" rotation="0 90 0">
+            <a-box position="0 0.4 0" width="0.5" height="0.1" depth="0.5"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1; roughness: 0.6"></a-box>
+            <a-box position="0 0.85 -0.22" width="0.5" height="0.8" depth="0.1"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1.5; roughness: 0.6"></a-box>
+            <a-cylinder position="-0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="-0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+          </a-entity>
+          <!-- Chair 3 -->
+          <a-entity position="0 0 1.1" rotation="0 180 0">
+            <a-box position="0 0.4 0" width="0.5" height="0.1" depth="0.5"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1; roughness: 0.6"></a-box>
+            <a-box position="0 0.85 -0.22" width="0.5" height="0.8" depth="0.1"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1.5; roughness: 0.6"></a-box>
+            <a-cylinder position="-0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="-0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+          </a-entity>
+          <!-- Chair 4 -->
+          <a-entity position="0 0 -1.1" rotation="0 0 0">
+            <a-box position="0 0.4 0" width="0.5" height="0.1" depth="0.5"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1; roughness: 0.6"></a-box>
+            <a-box position="0 0.85 -0.22" width="0.5" height="0.8" depth="0.1"
+              material="src: #leather-col; normalMap: #leather-nrm; roughnessMap: #leather-rgh; repeat: 1 1.5; roughness: 0.6"></a-box>
+            <a-cylinder position="-0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="-0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+            <a-cylinder position="0.2 0.2 -0.2" radius="0.02" height="0.4" color="#111"></a-cylinder>
+          </a-entity>
+        </a-entity>
+
+        <!-- Architectural Planter -->
+        <a-box position="1.8 0.4 5.5" width="1" height="1.2" depth="1" material="src: #stone-alt"></a-box>
+        <a-sphere position="1.8 1.4 5.5" radius="0.6" material="src: #leaf-col; color: #2d4c2d"
+          shadow="cast: true"></a-sphere>
+
+        <!-- Wall-Mounted Blueprint / Gallery (On the stone wall) -->
+        <a-entity position="-2.85 1.4 -3" rotation="0 90 0">
+          <a-box width="3.2" height="1.8" depth="0.05" color="#111"></a-box>
+          <a-plane position="0 0 0.03" width="3.1" height="1.7" src="#screen-02" material="roughness: 0"></a-plane>
+        </a-entity>
+      </a-entity>
+
+      <!-- 5. Future Car Parking Space detailing (Left Bay) -->
+      <a-entity id="parking-bay" position="-2.5 0.1 0">
+        <!-- Parking Striping (Aesthetic Metallic strips) -->
+        <a-box position="-2.6 0.01 0" width="0.1" height="0.02" depth="12" color="#555"
+          material="metalness: 0.9"></a-box>
+        <a-box position="2.6 0.01 0" width="0.1" height="0.02" depth="12" color="#555"
+          material="metalness: 0.9"></a-box>
+        <!-- Subtle Ambient Mood Light for the car spot -->
+        <a-entity light="type: point; color: #fff; intensity: 0.2; distance: 8" position="0 2.5 0"></a-entity>
+      </a-entity>
+    </a-entity>
+
+    <!-- Pedestrian Walkway to the House -->
+    <a-plane position="0 0.04 7" rotation="-90 0 0" width="2.4" height="17.5" color="#d1d5d8"
+      material="src: #concrete-col; normalMap: #concrete-nrm; roughnessMap: #concrete-rgh; repeat: 2 15; roughness: 1"
+      shadow="receive: true"></a-plane>
+
+    <!-- Road Surface (Asphalt) -->
+    <a-entity id="street-area" position="0 0 20">
+      <a-plane position="0 0.03 0" rotation="-90 0 0" width="60" height="9" color="#181a1c"
+        material="src: #concrete-col; normalMap: #concrete-nrm; roughnessMap: #concrete-rgh; repeat: 120 18; roughness: 1; metalness: 0"
+        shadow="receive: true"></a-plane>
+      <a-plane position="-15 0.04 0" rotation="-90 0 0" width="4" height="0.2" color="#e8c323"></a-plane>
+      <a-plane position="-5 0.04 0" rotation="-90 0 0" width="4" height="0.2" color="#e8c323"></a-plane>
+      <a-plane position="5 0.04 0" rotation="-90 0 0" width="4" height="0.2" color="#e8c323"></a-plane>
+      <a-plane position="15 0.04 0" rotation="-90 0 0" width="4" height="0.2" color="#e8c323"></a-plane>
+      <a-plane position="0 0.04 -4" rotation="-90 0 0" width="60" height="0.15" color="#fff"></a-plane>
+      <a-plane position="0 0.04 4" rotation="-90 0 0" width="60" height="0.15" color="#fff"></a-plane>
+    </a-entity>
+
+    <!-- ==========================================
+           GARDEN & TREES
+           ========================================== -->
+    <a-entity id="garden">
+      <a-entity position="12 0 15">
+        <a-cylinder position="0 1.5 0" radius="0.3" height="3" color="#5c432b"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 1 3"
+          shadow="cast: true"></a-cylinder>
+        <a-sphere position="0 3.5 0" radius="1.8" color="#2b5e34"
+          material="src: #leaf-col; normalMap: #leaf-nrm; roughnessMap: #leaf-rgh; repeat: 4 4"
+          shadow="cast: true"></a-sphere>
+      </a-entity>
+      <a-entity position="-18 0 6">
+        <a-cylinder position="0 1.2 0" radius="0.2" height="2.4" color="#5c432b"
+          material="src: #wood-col; normalMap: #wood-nrm; roughnessMap: #wood-rgh; repeat: 1 2.4"
+          shadow="cast: true"></a-cylinder>
+        <a-sphere position="0 2.8 0" radius="1.5" color="#2b5e34"
+          material="src: #leaf-col; normalMap: #leaf-nrm; roughnessMap: #leaf-rgh; repeat: 3 3"
+          shadow="cast: true"></a-sphere>
+      </a-entity>
+    </a-entity>
+
+  </a-scene>
+</body>
+
+</html>
